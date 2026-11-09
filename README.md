@@ -46,7 +46,7 @@ files/etc/uci-defaults/99-immortalwrt-x86-defaults   # 首次启动默认主题/
 1. 仓库 **Settings → Actions → General → Workflow permissions** 选 **Read and write permissions** 并保存。
    不设的话编译能过，但最后上传 Release 会 403（`Resource not accessible by integration`），固件只能在 run 页的 Artifacts 里下载。
 2. **Actions → ImmortalWrt Builder X86 → Run workflow**，分支选默认分支即可。
-3. 编译约 2～3 小时（2 核 runner，含 Docker/Go 包）。结束后：
+3. 编译耗时实测 **2 小时 52 分**（4 线程 runner，含 Docker/Go 包；其中 `Compile the firmware` 占 2h41m）。结束后：
    - 固件在 **Releases** 里（`*.img.gz`、`*rootfs.tar.gz`、`*sysupgrade*`）
    - 中间产物在本次 run 的 **Artifacts** 里
 4. 刷机：x86 软路由用 `*-combined-efi.img.gz`（UEFI 启动）或 `*-combined.img.gz`（BIOS 启动）。
@@ -71,3 +71,17 @@ files/etc/uci-defaults/99-immortalwrt-x86-defaults   # 首次启动默认主题/
 - **SSR Plus 里的「Shadowsocks-libev」模式不可用**：ImmortalWrt 25.12 的 feeds 已经把 shadowsocks-libev 拆体包（`ss-local`/`ss-redir`/`ss-server`）移出，所以 `.config` 里显式关掉了 libev 客户端/服务端选项。可用的协议是 **ShadowSocksR-libev、Shadowsocks-rust、Xray**；`make defconfig` 里会看到几条 `shadowsocks-libev-ss-* which does not exist` 的告警，属于已知无害项，工作流的 Verify 步骤会识别并放行。
 - 首次进后台：默认主题 Argon（Vantage / Aurora 可在「系统 → 语言和界面」里切换），语言中文，LAN `192.168.100.1`，默认账号 root。
 - rootfs 已放大到 1G，装 Docker 镜像够用；真不够再用 `luci-app-partexp` 或 DiskMan 扩分区。
+
+## 首次编译验证（2026-11-09）
+
+| 项目 | 结果 |
+|---|---|
+| Actions run | [#1](https://github.com/ywgf88/Actions-ImmortalWrt-X86/actions/runs/42571491204)，`succeeded in 2h 52m 5s` |
+| 关键步骤 | Init 2m37s → Clone 27s → feeds 52s+30s → Verify 33s → Download 4m11s → **Compile 2h41m50s** → Upload/Release 42s+17s |
+| Release | 标签 `2026.11.09-1702`，17 个 asset |
+| 主力固件 | `immortalwrt-x86-64-generic-squashfs-combined-efi.img.gz`（146 MB）、`immortalwrt-x86-64-generic-ext4-combined-efi.img.gz`（184 MB），另有 `-combined`（BIOS 引导）、`-rootfs.img.gz`、`kernel.bin`、`rootfs.tar.gz` |
+| 配置核对 | Release 内 `config.buildinfo`：`CONFIG_TARGET_ROOTFS_PARTSIZE=1024`、`CONFIG_TARGET_KERNEL_PARTSIZE=64`、`CONFIG_TARGET_x86_64_DEVICE_generic=y`，15 个必需包全部 `=y` |
+| 版本号核对 | `Load custom configuration` 日志：`VERSION_NUMBER ... 25.12.2`、`VERSION_REPO ... releases/25.12.2`、`config_generate 已屏蔽的 IPv6 判断数：4`、`默认 LAN 地址：192.168.100.1` |
+| 注解 | 5 条 `WARNING` annotation，全部是 ssr-plus 对 shadowsocks-libev 拆体包的可选依赖缺失，属已知无害项 |
+
+体验提示：`Upload firmware to release` 依赖 **Settings → Actions → General → Workflow permissions = Read and write**；这一项没设时编译能全绿、Release 却会 403，固件只剩 Artifacts。

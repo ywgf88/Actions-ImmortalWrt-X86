@@ -1,0 +1,9 @@
+#!/bin/sh
+# 首次启动默认值：主题 Argon、界面中文
+# （只在 /etc/config/luci 里没有对应项时生效，不覆盖用户已有设置）
+[ -f /etc/config/luci ] || exit 0
+uci -q get luci.main.mediaurlbase >/dev/null 2>&1 || \
+	uci -q set luci.main.mediaurlbase='/luci-static/argon'
+uci -q set luci.main.lang='zh_cn'
+uci -q commit luci
+exit 0

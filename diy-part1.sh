@@ -43,11 +43,13 @@ cp -rf "$SRC/clashoo/clashoo" "$SRC/clashoo/luci-app-clashoo" package/
 # 7) PassWall2 —— 只要 LuCI 插件；内核（xray-core 等）由 ImmortalWrt 官方 feeds 提供
 git_diy https://github.com/Openwrt-Passwall/openwrt-passwall2.git main "$SRC/passwall2"
 cp -rf "$SRC/passwall2/luci-app-passwall2" package/
-# 8) SSR Plus（ssrp）—— 主包 + 它自己依赖的几个 helloworld 内部包
-#    只拷这些，避免把 helloworld 里与官方 feeds 重名的包（xray-core 等）一起带进来
+# 8) helloworld 的若干小包（dns2tcp / microsocks / shadowsocksr-libev / lua-neturl）
+#    这些是 passwall2 等运行时可能用到的辅助组件，本身不含 rust，保留。
+#    注意：不再拷 luci-app-ssr-plus —— 它是唯一会牵扯 rust 生态的应用，
+#    而 feeds/packages/lang/rust 1.96.0 的 host 编译要从 ci 拉预编译 LLVM（已 404），
+#    每轮固定在 2h44m 处失败（run #4）。代理能力由 passwall2（Xray 内核）覆盖。
 git_diy https://github.com/fw876/helloworld.git master "$SRC/helloworld"
-cp -rf "$SRC/helloworld/luci-app-ssr-plus" \
-       "$SRC/helloworld/lua-neturl" \
+cp -rf "$SRC/helloworld/lua-neturl" \
        "$SRC/helloworld/dns2tcp" \
        "$SRC/helloworld/microsocks" \
        "$SRC/helloworld/shadowsocksr-libev" package/

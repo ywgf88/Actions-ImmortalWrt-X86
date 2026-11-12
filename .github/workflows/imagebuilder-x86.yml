@@ -62,6 +62,12 @@ jobs:
         echo "==== 产物 ===="
         ls -lh bin_out/targets/x86/64/ 2>/dev/null || ls -lhR bin_out | head -40
 
+    - name: Fix ownership of build output
+      run: |
+        # 容器以 root 运行，产物回写到宿主是 root 所有，后续 mv 会 Permission denied
+        sudo chown -R "$(id -u):$(id -g)" bin_out
+        ls -lh bin_out/targets/x86/64/ 2>/dev/null || true
+
     - name: Collect firmware
       run: |
         set -e

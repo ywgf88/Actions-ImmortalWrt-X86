@@ -21,7 +21,9 @@ permissions:
   contents: write
 
 env:
-  IB_VER: "25.12.2"
+  # 25.12.2 的官方 imagebuilder 包不完整（自带 packages/packages.adb 缺失，
+  # 装完包后 rootfs 没有 /boot 内容，打包镜像必失败），先用 25.12.1 验证通道
+  IB_VER: "25.12.1"
   TZ: Asia/Shanghai
 
 jobs:

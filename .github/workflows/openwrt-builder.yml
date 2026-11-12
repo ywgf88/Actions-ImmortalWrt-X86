@@ -33,10 +33,30 @@ jobs:
       run: |
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo docker image prune --all --force
-        sudo -E apt-get -qq update
-        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
-        sudo -E apt-get -qq autoremove --purge
-        sudo -E apt-get -qq clean
+        # runner 偶发 DNS 解析失败会让 apt 一个包都装不上（另外两个 x86 仓库 11-11 就是这样挂的）。
+        # 加固三层：DNS 兜底 + apt 内建重试 + 整体重试 3 轮。
+        if ! getent hosts archive.ubuntu.com >/dev/null 2>&1; then
+          echo "::warning::runner 解析 archive.ubuntu.com 失败，写入公共 DNS 兜底"
+          sudo sh -c 'printf "nameserver 8.8.8.8\nnameserver 1.1.1.1\n" > /etc/resolv.conf'
+        fi
+        APT_OPTS="-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+        PKGS="ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev"
+        retry_apt() {
+          n=0
+          until "$@"; do
+            n=$((n + 1))
+            if [ "$n" -ge 3 ]; then
+              echo "::error::apt 连续 3 次失败，runner 网络或 DNS 异常，稍后重跑即可"
+              return 1
+            fi
+            echo "::warning::apt 第 $n 次失败，20 秒后重试"
+            sleep 20
+          done
+        }
+        retry_apt sudo -E apt-get -qq $APT_OPTS update
+        retry_apt sudo -E apt-get -qq $APT_OPTS install $PKGS
+        sudo -E apt-get -qq $APT_OPTS autoremove --purge
+        sudo -E apt-get -qq $APT_OPTS clean
         sudo timedatectl set-timezone "$TZ"
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
@@ -112,6 +132,16 @@ jobs:
         # defconfig 里偶发 "recursive dependency detected!"，来自 dnsdist / weechat / snort3 /
         # knot-resolver / openappid 这些与本次无关的 feed 包，不影响目标插件，仅提示
         grep "recursive dependency detected!" /tmp/defconfig.log | wc -l | xargs -I{} echo "recursive dependency 告警数（来自无关 feed 包）：{}"
+        # SS-rust 必须保持关闭：它会触发 host 端编译 rustc，而 rust 1.96.0 的 bootstrap
+        # 要从 ci-artifacts.rust-lang.org 拉预编译 LLVM，该链接已 404（#2 即死在这里）。
+        # ImmortalWrt 的 ssr-plus 用 Xray + ShadowSocksR-libev 就够，不需要 Rust 客户端。
+        if grep -q '^CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Shadowsocks_Rust_Client=y' .config \
+           || grep -q '^CONFIG_PACKAGE_shadowsocks-rust=y' .config; then
+          echo "::error::shadowsocks-rust 又被选回来了，会重新触发 host rustc 编译（上游 ci-llvm 链接失效，必然失败）"
+          grep -E 'shadowsocks-rust|Shadowsocks_Rust_Client' .config || true
+          exit 1
+        fi
+        echo "OK  SS-rust 已关闭（不参与编译）"
         # 必需包逐个校验：缺任何一个都直接失败，避免编出一个少插件的固件
         miss=0
         for p in luci-app-run luci-app-quickfile quickfile luci-theme-aurora \
@@ -219,11 +249,16 @@ jobs:
         echo "status=success" >> $GITHUB_OUTPUT
     - name: Upload firmware to release
       uses: softprops/action-gh-release@v2
-      if: steps.tag.outputs.status == 'success' && !cancelled()
+      if: steps.organize.outputs.status == 'success' && steps.tag.outputs.status == 'success' && !cancelled()
       with:
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
-        files: ${{ env.FIRMWARE }}/*
+        # 只上传真正的镜像，不要用 /* —— 避免把 runner 根目录的 /swapfile 扫进去
+        files: |
+          ${{ env.FIRMWARE }}/*.img.gz
+          ${{ env.FIRMWARE }}/*.tar.gz
+          ${{ env.FIRMWARE }}/*.manifest
+          ${{ env.FIRMWARE }}/*.bin
     # 调试期先禁用：失败记录被自动删除会妨碍排查
     # - name: Delete workflow runs
     #   uses: Mattraks/delete-workflow-runs@main

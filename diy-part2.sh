@@ -91,6 +91,24 @@ PY
 if [ -d files/etc/uci-defaults ]; then
   chmod +x files/etc/uci-defaults/* 2>/dev/null || true
 fi
+# 9) 修补上游 nginx 包的 CONFIGURE_ARGS 写法
+#    feeds/packages/net/nginx 在 2026-11-11 把
+#      CONFIGURE_ARGS =  ...
+#    误写成了
+#      CONFIGURE_ARGS += ...
+#    于是 OpenWrt 默认那套 autotools 参数（--target/--host/--disable-nls/--exec-prefix/
+#    --bindir/--sbindir/--libexecdir/--sysconfdir/--datadir/--localstatedir/--infodir/
+#    --mandir）被追加传给 nginx 自己的 configure；nginx 不认这些选项，会直接
+#    "./configure: error: ignoring invalid option ..." 退出（#2 的 40 条报错即此）。
+#    这里就地改回覆盖写法；上游修复后本段自动不再触发（幂等）。
+NGX_MK="feeds/packages/net/nginx/Makefile"
+if [ -f "$NGX_MK" ] && grep -q '^CONFIGURE_ARGS +=' "$NGX_MK"; then
+  sed -i 's/^CONFIGURE_ARGS +=/CONFIGURE_ARGS =/' "$NGX_MK"
+  echo "nginx: CONFIGURE_ARGS 已由追加改回覆盖（避免 autotools 参数传给 nginx configure）"
+else
+  echo "nginx: 无需修补（已是覆盖写法或文件不存在）"
+fi
+rm -f tmp/.packageinfo tmp/.packageauxvars 2>/dev/null || true
 echo "==== 定制结果自检 ===="
 grep -n '25\.12\.2' include/version.mk | head -3 || true
 echo -n "config_generate 已屏蔽的 IPv6 判断数："

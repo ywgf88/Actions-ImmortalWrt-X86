@@ -1,10 +1,15 @@
 name: ImmortalWrt ImageBuilder X86
 
-# 说明：这条工作流不做源码编译，只下载官方预编译好的 ImageBuilder 包，
+# 说明：这条工作流不做源码编译，直接跑官方 ImageBuilder 容器，
 # 用 apk 装现成的软件包再打包成镜像，通常 10 分钟内出固件。
 # 限制：只能装官方仓库里已有的包；passwall2 / clashoo / quickfile / partexp /
 # run / aurora / ssr-plus 这类第三方插件没有预编译包，装不了 —— 要用源码那条
 # 工作流（openwrt-builder.yml）才能带上。
+#
+# 为什么用 docker 镜像而不是官方 tar 包：
+# 25.12.2 的 immortalwrt-imagebuilder-*-x86-64.Linux-x86_64.tar.zst 缺 packages/packages.adb，
+# 装完包后 rootfs 里没有 /boot 内容，打包镜像会报 "cp: cannot stat .../root-x86/boot/." 失败。
+# 官方 docker 镜像（immortalwrt/imagebuilder）结构完整，wukongdaily 也是走这个。
 on:
   workflow_dispatch:
     inputs:
@@ -21,9 +26,7 @@ permissions:
   contents: write
 
 env:
-  # 25.12.2 的官方 imagebuilder 包不完整（自带 packages/packages.adb 缺失，
-  # 装完包后 rootfs 没有 /boot 内容，打包镜像必失败），先用 25.12.1 验证通道
-  IB_VER: "25.12.1"
+  IB_VER: "25.12.2"
   TZ: Asia/Shanghai
 
 jobs:
@@ -34,45 +37,40 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Download ImageBuilder
+    - name: Pull imagebuilder image
       run: |
         set -e
-        IB_NAME="immortalwrt-imagebuilder-${IB_VER}-x86-64.Linux-x86_64"
-        cd /tmp
-        wget -q --tries=3 --timeout=60 \
-          "https://downloads.immortalwrt.org/releases/${IB_VER}/targets/x86/64/${IB_NAME}.tar.zst"
-        ls -lh "${IB_NAME}.tar.zst"
-        tar --zstd -xf "${IB_NAME}.tar.zst"
-        ls -d "/tmp/${IB_NAME}"
-        echo "IB_DIR=/tmp/${IB_NAME}" >> $GITHUB_ENV
+        docker pull "immortalwrt/imagebuilder:x86-64-openwrt-${IB_VER}"
+        docker run --rm "immortalwrt/imagebuilder:x86-64-openwrt-${IB_VER}" \
+          /bin/bash -c 'cd /home/build/immortalwrt && pwd && ls | head -20'
 
     - name: Build image
       run: |
         set -e
-        cd "$IB_DIR"
-        # 只放官方仓库里确定存在的包；第三方插件不在其中
         PKGS="luci-app-dockerman luci-i18n-dockerman-zh-cn docker docker-compose luci-app-sqm luci-i18n-sqm-zh-cn luci-app-ddns luci-i18n-ddns-zh-cn luci-app-wol luci-i18n-wol-zh-cn luci-app-upnp luci-i18n-upnp-zh-cn luci-app-commands luci-proto-wireguard luci-app-ttyd luci-i18n-ttyd-zh-cn luci-theme-argon luci-app-argon-config luci-i18n-argon-config-zh-cn openssh-sftp-server curl ca-bundle"
-        PKGS="$PKGS ${{ inputs.extra_packages }}"
+        [ -n "${{ inputs.extra_packages }}" ] && PKGS="$PKGS ${{ inputs.extra_packages }}"
         echo "==== 包列表 ===="
         echo "$PKGS"
-        echo "==== 开始打包 ===="
-        make image PROFILE="generic" \
-          PACKAGES="$PKGS" \
-          FILES="$GITHUB_WORKSPACE/files_ib" \
-          ROOTFS_PARTSIZE="${{ inputs.rootfs_size_mb }}"
+        mkdir -p bin_out
+        docker run --rm \
+          -v "$GITHUB_WORKSPACE/bin_out:/home/build/immortalwrt/bin" \
+          -v "$GITHUB_WORKSPACE/files_ib:/home/build/immortalwrt/files" \
+          -e PKGS="$PKGS" \
+          -e ROOTFS_SIZE="${{ inputs.rootfs_size_mb }}" \
+          "immortalwrt/imagebuilder:x86-64-openwrt-${IB_VER}" \
+          /bin/bash -c 'cd /home/build/immortalwrt && make image PROFILE="generic" PACKAGES="$PKGS" FILES="/home/build/immortalwrt/files" ROOTFS_PARTSIZE="$ROOTFS_SIZE"'
         echo "==== 产物 ===="
-        ls -lh bin/targets/x86/64/
+        ls -lh bin_out/targets/x86/64/ 2>/dev/null || ls -lhR bin_out | head -40
 
     - name: Collect firmware
       run: |
         set -e
-        cd "$IB_DIR/bin/targets/x86/64"
+        cd bin_out/targets/x86/64
         rm -rf packages
-        # 重命名，避免和源码编译的产物混淆
         for f in *; do
           [ -f "$f" ] || continue
           case "$f" in
-            *efi.img.gz) mv "$f" "ImmortalWrt-IB-${IB_VER}-x86_64-efi.img.gz" ;;
+            *combined-efi.img.gz) mv "$f" "ImmortalWrt-IB-${IB_VER}-x86_64-combined-efi.img.gz" ;;
             *combined.img.gz) mv "$f" "ImmortalWrt-IB-${IB_VER}-x86_64-combined.img.gz" ;;
           esac
         done

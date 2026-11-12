@@ -41,8 +41,8 @@ jobs:
           "https://downloads.immortalwrt.org/releases/${IB_VER}/targets/x86/64/${IB_NAME}.tar.zst"
         ls -lh "${IB_NAME}.tar.zst"
         tar --zstd -xf "${IB_NAME}.tar.zst"
+        ls -d "/tmp/${IB_NAME}"
         echo "IB_DIR=/tmp/${IB_NAME}" >> $GITHUB_ENV
-        ls "$IB_DIR"
 
     - name: Build image
       run: |

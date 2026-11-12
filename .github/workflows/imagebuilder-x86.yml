@@ -1,0 +1,101 @@
+name: ImmortalWrt ImageBuilder X86
+
+# 说明：这条工作流不做源码编译，只下载官方预编译好的 ImageBuilder 包，
+# 用 apk 装现成的软件包再打包成镜像，通常 10 分钟内出固件。
+# 限制：只能装官方仓库里已有的包；passwall2 / clashoo / quickfile / partexp /
+# run / aurora / ssr-plus 这类第三方插件没有预编译包，装不了 —— 要用源码那条
+# 工作流（openwrt-builder.yml）才能带上。
+on:
+  workflow_dispatch:
+    inputs:
+      rootfs_size_mb:
+        description: "rootfs 分区大小（MB）"
+        required: true
+        default: "1024"
+      extra_packages:
+        description: "额外软件包（空格分隔，必须是官方仓库已有的包）"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  IB_VER: "25.12.2"
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Download ImageBuilder
+      run: |
+        set -e
+        IB_NAME="immortalwrt-imagebuilder-${IB_VER}-x86-64.Linux-x86_64"
+        cd /tmp
+        wget -q --tries=3 --timeout=60 \
+          "https://downloads.immortalwrt.org/releases/${IB_VER}/targets/x86/64/${IB_NAME}.tar.zst"
+        ls -lh "${IB_NAME}.tar.zst"
+        tar --zstd -xf "${IB_NAME}.tar.zst"
+        echo "IB_DIR=/tmp/${IB_NAME}" >> $GITHUB_ENV
+        ls "$IB_DIR"
+
+    - name: Build image
+      run: |
+        set -e
+        cd "$IB_DIR"
+        # 只放官方仓库里确定存在的包；第三方插件不在其中
+        PKGS="luci-app-dockerman luci-i18n-dockerman-zh-cn docker docker-compose luci-app-sqm luci-i18n-sqm-zh-cn luci-app-ddns luci-i18n-ddns-zh-cn luci-app-wol luci-i18n-wol-zh-cn luci-app-upnp luci-i18n-upnp-zh-cn luci-app-commands luci-proto-wireguard luci-app-ttyd luci-i18n-ttyd-zh-cn luci-theme-argon luci-app-argon-config luci-i18n-argon-config-zh-cn openssh-sftp-server curl ca-bundle"
+        PKGS="$PKGS ${{ inputs.extra_packages }}"
+        echo "==== 包列表 ===="
+        echo "$PKGS"
+        echo "==== 开始打包 ===="
+        make image PROFILE="generic" \
+          PACKAGES="$PKGS" \
+          FILES="$GITHUB_WORKSPACE/files_ib" \
+          ROOTFS_PARTSIZE="${{ inputs.rootfs_size_mb }}"
+        echo "==== 产物 ===="
+        ls -lh bin/targets/x86/64/
+
+    - name: Collect firmware
+      run: |
+        set -e
+        cd "$IB_DIR/bin/targets/x86/64"
+        rm -rf packages
+        # 重命名，避免和源码编译的产物混淆
+        for f in *; do
+          [ -f "$f" ] || continue
+          case "$f" in
+            *efi.img.gz) mv "$f" "ImmortalWrt-IB-${IB_VER}-x86_64-efi.img.gz" ;;
+            *combined.img.gz) mv "$f" "ImmortalWrt-IB-${IB_VER}-x86_64-combined.img.gz" ;;
+          esac
+        done
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        ls -lh
+
+    - name: Generate release tag
+      id: tag
+      run: |
+        echo "release_tag=IB-$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        {
+          echo "ImmortalWrt ${IB_VER} · x86_64 · ImageBuilder 快速出包"
+          echo ""
+          echo "rootfs 分区 ${{ inputs.rootfs_size_mb }}MiB；默认 LAN 192.168.100.1"
+          echo "本包由官方 ImageBuilder 组装，不含第三方源码插件"
+        } > release-ib.txt
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload to release
+      uses: softprops/action-gh-release@v2
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      with:
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release-ib.txt
+        files: |
+          ${{ env.FIRMWARE }}/*.img.gz
+          ${{ env.FIRMWARE }}/*.tar.gz
+          ${{ env.FIRMWARE }}/*.manifest

@@ -52,7 +52,7 @@ jobs:
         echo "==== 包列表 ===="
         echo "$PKGS"
         mkdir -p bin_out
-        docker run --rm \
+        docker run --rm --user root \
           -v "$GITHUB_WORKSPACE/bin_out:/home/build/immortalwrt/bin" \
           -v "$GITHUB_WORKSPACE/files_ib:/home/build/immortalwrt/files" \
           -e PKGS="$PKGS" \

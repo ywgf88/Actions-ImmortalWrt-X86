@@ -173,23 +173,32 @@ jobs:
         fi
         echo "==== 配置校验通过 ===="
     # 诊断：确认是哪个包把 rust/host 拉进构建计划（上游 ci-llvm 已 404，一旦触发必失败）
+    # 输出同时写进 job summary，便于直接阅读（日志区在网页上是虚拟化的）
     - name: Diagnose rust dependency
       run: |
         cd openwrt
-        echo "==== 已选中的 rust / python3 相关符号 ===="
-        grep -E '^CONFIG_PACKAGE_(rust|python3|python3-cryptography|python3-maturin|python3-rpds-py)(=y|=m)' .config || echo "(以上均未选中)"
-        echo "==== tmp/.packageinfo 中 Depends 含 rust 的包 ===="
-        if [ -f tmp/.packageinfo ]; then
-          awk '/^Package:/{p=$2} /^Depends:/ && /rust/ {print p" -> "$0}' tmp/.packageinfo | head -30 || true
-          echo "--- BuildDepends 含 rust 的包 ---"
-          awk '/^Package:/{p=$2} /^BuildDepends:/ && /rust/ {print p" -> "$0}' tmp/.packageinfo | head -30 || true
-        else
-          echo "tmp/.packageinfo 不存在"
-        fi
-        echo "==== package/ 与 feeds/ 里声明 rust/host 的 Makefile ===="
-        grep -rl --include=Makefile 'rust/host' package/ feeds/ 2>/dev/null | head -30 || true
-        echo "==== 最终会编 rust host 的判定 ===="
-        if grep -qE '^CONFIG_PACKAGE_rust=y' .config; then echo "rust 包本身被选中"; else echo "rust 包未被直接选中，属间接 host 依赖"; fi
+        OUT=/tmp/rustdiag.txt
+        : > "$OUT"
+        {
+          echo "### rust 依赖诊断"
+          echo '```'
+          echo "==== 已选中的 rust / python3 相关符号 ===="
+          grep -E '^CONFIG_PACKAGE_(rust|python3|python3-cryptography|python3-maturin|python3-rpds-py)(=y|=m)' .config || echo "(以上均未选中)"
+          echo "==== tmp/.packageinfo 中 Depends / BuildDepends 含 rust 的包 ===="
+          if ls tmp/.packageinfo* >/dev/null 2>&1; then
+            awk '/^Package:/{p=$2} /^Depends:/ && /rust/ {print p" -> "$0}' tmp/.packageinfo* | head -40 || true
+            echo "--- BuildDepends ---"
+            awk '/^Package:/{p=$2} /^BuildDepends:/ && /rust/ {print p" -> "$0}' tmp/.packageinfo* | head -40 || true
+          else
+            echo "tmp/.packageinfo 不存在；改用 dir 扫描"
+          fi
+          echo "==== package/ 与 feeds/ 里声明 rust/host 的 Makefile ===="
+          grep -rl --include=Makefile 'rust/host' package/ feeds/ 2>/dev/null | head -40 || true
+          echo "==== 判定 ===="
+          if grep -qE '^CONFIG_PACKAGE_rust=y' .config; then echo "rust 包本身被选中"; else echo "rust 包未被直接选中，属间接 host 依赖"; fi
+          echo '```'
+        } | tee "$OUT"
+        cat "$OUT" >> "$GITHUB_STEP_SUMMARY"
     # 缓存两样东西：ccache（重复的 C/C++ 编译直接命中）和 dl（源码 tarball，省下载）
     # key 用 .config 的 hash + run_id：每次新 key 便于保存，restore-keys 保证能捞到上一版
     - name: Restore ccache and dl cache

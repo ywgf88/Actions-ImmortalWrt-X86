@@ -283,8 +283,10 @@ jobs:
           echo "ImmortalWrt 25.12.2 · x86_64 · 默认 IPv4"
           echo ""
           echo "rootfs 分区 1024MiB；默认 LAN 192.168.100.1"
-          echo "插件：luci-app-run / luci-app-quickfile / luci-theme-aurora / luci-app-partexp"
-          echo "      PassWall2(ssrp=xray) / SSR Plus / Clashoo / Docker(dockerman) / DiskMan"
+          echo "插件：luci-app-run / luci-theme-aurora / luci-app-partexp / Clashoo"
+          echo "      PassWall2（核心 xray） / Dockerman / DiskMan"
+          echo "已移除：luci-app-quickfile 与 luci-app-ssr-plus（二者会把 Rust 版组件拉进构建，"
+          echo "        触发 host rustc 编译；上游 ci-llvm 下载链接已 404，故不再包含）"
           echo "主题：Argon（默认）+ Vantage + Aurora"
         } > release.txt
         echo "status=success" >> $GITHUB_OUTPUT

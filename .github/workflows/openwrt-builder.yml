@@ -136,12 +136,20 @@ jobs:
         # 其 Makefile 声明 PKG_BUILD_DEPENDS:=rust/host，这才是 rust host 编译被拉起的唯一原因
         # （run #7 诊断实证：package/quickfile/Makefile 在声明 rust/host 的清单里，而 .config 里
         #  rust / python3 / cryptography / maturin 一个都没选中）。该包已整体移除。
-        if grep -qE '^CONFIG_PACKAGE_(quickfile|luci-app-quickfile|rust|shadowsocks-rust|luci-app-ssr-plus)=y' .config; then
-          echo "::error::quickfile / rust / shadowsocks-rust / ssr-plus 中被选回来了，会重新拉 host rustc 编译（ci-llvm 404，必失败）"
+        if grep -qE '^CONFIG_PACKAGE_(quickfile|luci-app-quickfile|rust|shadowsocks-rust|luci-app-ssr-plus)=[ym]' .config; then
+          echo "::error::quickfile / rust / shadowsocks-rust / ssr-plus 中被选回来了（=y 或 =m 都会触发 host rustc 编译，ci-llvm 404 必失败）"
           grep -E '^CONFIG_PACKAGE_(quickfile|luci-app-quickfile|rust|shadowsocks-rust|luci-app-ssr-plus)' .config || true
           exit 1
         fi
-        echo "OK  quickfile 已移除，rust / shadowsocks-rust / ssr-plus 均不在编译列表"
+        # 兜底：任何 *_INCLUDE_*Shadowsocks_Rust* 之类的选项也可能把 shadowsocks-rust 拉成 =m
+        if grep -qE '^CONFIG_PACKAGE_.*Shadowsocks.*Rust.*=[ym]' .config; then
+          echo "::error::配置里仍有 Shadowsocks Rust 相关的 INCLUDE 选项，会重新拉 host rustc"
+          grep -E '^CONFIG_PACKAGE_.*Rust.*=[ym]' .config || true
+          exit 1
+        fi
+        echo "OK  quickfile / rust / shadowsocks-rust / ssr-plus 均不在编译列表（含 =m）"
+        echo "==== defconfig 后所有 rust 相关符号 ===="
+        grep -E 'rust' .config | grep -E '=[ym]' || echo "(无)"
         # 必需包逐个校验：缺任何一个都直接失败，避免编出一个少插件的固件
         miss=0
         for p in luci-app-run luci-theme-aurora \
@@ -178,18 +186,24 @@ jobs:
           echo '```'
           echo "==== 已选中的 rust / python3 相关符号 ===="
           grep -E '^CONFIG_PACKAGE_(rust|python3|python3-cryptography|python3-maturin|python3-rpds-py)(=y|=m)' .config || echo "(以上均未选中)"
-          echo "==== tmp/.packageinfo 中 Depends / BuildDepends 含 rust 的包 ===="
+          echo "==== 已选中(=y|=m) 且声明 rust/host 的包（真正的元凶） ===="
           if ls tmp/.packageinfo* >/dev/null 2>&1; then
-            awk '/^Package:/{p=$2} /^Depends:/ && /rust/ {print p" -> "$0}' tmp/.packageinfo* | head -40 || true
-            echo "--- BuildDepends ---"
-            awk '/^Package:/{p=$2} /^BuildDepends:/ && /rust/ {print p" -> "$0}' tmp/.packageinfo* | head -40 || true
+            awk '/^Package:/{p=$2} /^BuildDepends:/ && /rust\/host/ {print p}' tmp/.packageinfo* \
+              | sort -u > /tmp/rustdeps.txt
+            while IFS= read -r pkg; do
+              [ -z "$pkg" ] && continue
+              if grep -qE "^CONFIG_PACKAGE_${pkg}=[ym]" .config; then
+                echo "!! 被选中且需要 rust/host：$pkg"
+              fi
+            done < /tmp/rustdeps.txt
+            echo "(以上为空 = 没有选中包依赖 rust/host；若仍编 rust 则来自默认包集)"
           else
             echo "tmp/.packageinfo 不存在；改用 dir 扫描"
           fi
           echo "==== package/ 与 feeds/ 里声明 rust/host 的 Makefile ===="
           grep -rl --include=Makefile 'rust/host' package/ feeds/ 2>/dev/null | head -40 || true
           echo "==== 判定 ===="
-          if grep -qE '^CONFIG_PACKAGE_rust=y' .config; then echo "rust 包本身被选中"; else echo "rust 包未被直接选中，属间接 host 依赖"; fi
+          if grep -qE '^CONFIG_PACKAGE_rust=[ym]' .config; then echo "rust 包本身被选中"; else echo "rust 包未被直接选中，属间接 host 依赖"; fi
           echo '```'
         } | tee "$OUT"
         cat "$OUT" >> "$GITHUB_STEP_SUMMARY"

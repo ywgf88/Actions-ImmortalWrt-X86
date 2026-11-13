@@ -132,25 +132,19 @@ jobs:
         # defconfig 里偶发 "recursive dependency detected!"，来自 dnsdist / weechat / snort3 /
         # knot-resolver / openappid 这些与本次无关的 feed 包，不影响目标插件，仅提示
         grep "recursive dependency detected!" /tmp/defconfig.log | wc -l | xargs -I{} echo "recursive dependency 告警数（来自无关 feed 包）：{}"
-        # 2026-11-12 起 ssr-plus 整体移除：它是唯一会牵扯 rust 生态的应用，
-        # 而 rust 1.96.0 的 host 编译要从 ci 拉预编译 LLVM（链接已 404），
-        # 导致每轮都在 2h44m 处失败（run #4）。这里改成"必须不在配置里"，编前就拦住。
-        if grep -qE '^CONFIG_PACKAGE_luci-app-ssr-plus=y' .config; then
-          echo "::error::ssr-plus 仍在配置里，会拉 rust host 编译（上游 ci-llvm 已 404，必然失败）"
-          grep -E 'ssr-plus' .config || true
+        # 2026-11-13 定位到真正元凶：sbwml/luci-app-quickfile 里的 quickfile 包是 Rust/Axum 写的，
+        # 其 Makefile 声明 PKG_BUILD_DEPENDS:=rust/host，这才是 rust host 编译被拉起的唯一原因
+        # （run #7 诊断实证：package/quickfile/Makefile 在声明 rust/host 的清单里，而 .config 里
+        #  rust / python3 / cryptography / maturin 一个都没选中）。该包已整体移除。
+        if grep -qE '^CONFIG_PACKAGE_(quickfile|luci-app-quickfile|rust|shadowsocks-rust|luci-app-ssr-plus)=y' .config; then
+          echo "::error::quickfile / rust / shadowsocks-rust / ssr-plus 中被选回来了，会重新拉 host rustc 编译（ci-llvm 404，必失败）"
+          grep -E '^CONFIG_PACKAGE_(quickfile|luci-app-quickfile|rust|shadowsocks-rust|luci-app-ssr-plus)' .config || true
           exit 1
         fi
-        for bad in shadowsocks-rust rust; do
-          if grep -qE "^CONFIG_PACKAGE_${bad}=y" .config; then
-            echo "::error::${bad} 被选进来了，会触发 host rustc 编译（上游 ci-llvm 已 404，必然失败）"
-            grep -E "^CONFIG_PACKAGE_${bad}" .config || true
-            exit 1
-          fi
-        done
-        echo "OK  ssr-plus 已移除，rust / shadowsocks-rust 均不在编译列表"
+        echo "OK  quickfile 已移除，rust / shadowsocks-rust / ssr-plus 均不在编译列表"
         # 必需包逐个校验：缺任何一个都直接失败，避免编出一个少插件的固件
         miss=0
-        for p in luci-app-run luci-app-quickfile quickfile luci-theme-aurora \
+        for p in luci-app-run luci-theme-aurora \
                  luci-app-partexp luci-theme-argon luci-theme-vantage \
                  luci-app-passwall2 clashoo luci-app-clashoo \
                  docker dockerd luci-app-dockerman luci-app-diskman; do

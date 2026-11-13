@@ -24,10 +24,11 @@ git_diy() { git clone --depth 1 -b "$2" "$1" "$3"; }
 # 1) luci-app-run —— Run 安装器（.run 包安装，兼容 25.12 的 apk）
 git_diy https://github.com/wukongdaily/luci-app-run.git master "$SRC/run"
 cp -rf "$SRC/run/luci-app-run" package/
-# 2) luci-app-quickfile —— LuCI 页面 + quickfile 主程序（Rust/Axum）
-#    仓库里是两个独立包，只拷 LuCI 页面会因 +quickfile 依赖不满足被 defconfig 清掉
-git_diy https://github.com/sbwml/luci-app-quickfile.git main "$SRC/quickfile"
-cp -rf "$SRC/quickfile/luci-app-quickfile" "$SRC/quickfile/quickfile" package/
+# 2) luci-app-quickfile —— 【已禁用】该包是 Rust/Axum 写的，Makefile 声明 PKG_BUILD_DEPENDS:=rust/host，
+#    会把 rust 1.96.0 的 host 编译拉进构建（其 ci 预编译 LLVM 已 404），导致编译在 2h30m 处失败。
+#    上游无预编译 release 二进制，故不再引入。文件管理用 dockerman/diskman。
+# git_diy https://github.com/sbwml/luci-app-quickfile.git main "$SRC/quickfile"
+# cp -rf "$SRC/quickfile/luci-app-quickfile" "$SRC/quickfile/quickfile" package/
 # 3) luci-app-partexp —— 分区扩容
 git_diy https://github.com/sirpdboy/luci-app-partexp.git main "$SRC/partexp"
 cp -rf "$SRC/partexp/luci-app-partexp" package/
